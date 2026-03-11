@@ -1,0 +1,9 @@
+loadModel(Modelica);
+loadFile("DemoPlant/package.mo");
+loadFile("DemoPlant/SingleZoneThermal.mo");
+
+simulate(DemoPlant.SingleZoneThermal, stopTime=100, method="euler", numberOfIntervals=100);
+
+buildModelFMU(DemoPlant.SingleZoneThermal, version="2.0", fmuType="cs", fileNamePrefix="SingleZoneThermal");
+
+system("mkdir -p ../artifacts && cp SingleZoneThermal.fmu ../artifacts/");

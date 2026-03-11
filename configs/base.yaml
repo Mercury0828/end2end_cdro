@@ -1,0 +1,19 @@
+seed: 42
+horizon: 100
+safety_threshold: 0.0
+lambda_penalty: 100.0
+plant:
+  mode: python   # python|fmu
+  dt: 1.0
+  alpha: 0.08
+  beta: 0.35
+  gamma: 0.6
+  x0: -1.5
+  fmu_path: artifacts/SingleZoneThermal.fmu
+evaluation:
+  n_train: 64
+  n_val: 16
+  n_test: 32
+  output_dir: outputs/default_run
+  results_csv: results_per_step.csv
+  summary_csv: summary.csv
