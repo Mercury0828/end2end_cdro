@@ -1,0 +1,10 @@
+T: 100
+calm_end: 40
+burst_end: 60
+xi_calm_mean: 0.2
+xi_calm_std: 0.05
+xi_burst_lognorm_mean: 0.0
+xi_burst_lognorm_sigma: 1.0
+tamb_base: 30.0
+tamb_amp: 4.0
+tamb_period: 100

@@ -1,0 +1,3 @@
+controller: static_cdro
+u_max: 10.0
+rho_fixed: 0.9

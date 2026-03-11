@@ -1,0 +1,3 @@
+controller: ppo
+enabled: false
+note: "PPO dependency path intentionally optional in this research demo"

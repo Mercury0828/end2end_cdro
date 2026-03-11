@@ -1,0 +1,6 @@
+controller: ddro
+u_max: 10.0
+rho_min: 0.2
+rho_max: 2.0
+adapt_gain: 2.5
+window: 8
