@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 import argparse
 from pathlib import Path
 import pandas as pd
+from pandas.errors import EmptyDataError
 
 from src.plotting.plots import (
     plot_system_schematic,
@@ -33,7 +34,16 @@ if __name__ == "__main__":
     out.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(args.results)
-    summary = pd.read_csv(args.summary)
+    if Path(args.summary).exists():
+        try:
+            summary = pd.read_csv(args.summary)
+        except EmptyDataError:
+            summary = pd.DataFrame()
+    else:
+        summary = pd.DataFrame()
+
+    if df.empty:
+        raise RuntimeError("Results CSV is empty; run eval_all longer or use a checkpointed output.")
 
     plot_system_schematic(str(out / "01_system_schematic.png"))
     plot_thermal_schematic(str(out / "02_thermal_plant_schematic.png"))

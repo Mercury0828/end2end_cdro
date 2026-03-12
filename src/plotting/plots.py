@@ -26,6 +26,18 @@ def _save(fig, out):
     plt.close(fig)
 
 
+def _pick_row_at_or_before(d: pd.DataFrame, t: int) -> pd.Series | None:
+    if d.empty:
+        return None
+    exact = d[d["t"] == t]
+    if not exact.empty:
+        return exact.iloc[0]
+    le = d[d["t"] <= t]
+    if not le.empty:
+        return le.iloc[-1]
+    return d.iloc[0]
+
+
 def plot_system_schematic(out_path: str):
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.axis("off")
@@ -62,7 +74,14 @@ def plot_thermal_schematic(out_path: str, nx=8, ny=8):
 
 
 def plot_timeseries_panel(df: pd.DataFrame, out_path: str, scenario_family: str, split: str):
-    sub = df[(df["family"] == scenario_family) & (df["split"] == split) & (df["episode"] == 0)]
+    sub = df[(df["family"] == scenario_family) & (df["split"] == split)]
+    if sub.empty:
+        sub = df[df["split"] == split]
+    if sub.empty:
+        return
+    ep0 = int(sub["episode"].min())
+    sub = sub[sub["episode"] == ep0]
+
     fig, axs = plt.subplots(5, 1, figsize=(11, 11), sharex=True)
     for ctrl, g in sub.groupby("controller"):
         color = PALETTE.get(ctrl)
@@ -79,7 +98,7 @@ def plot_timeseries_panel(df: pd.DataFrame, out_path: str, scenario_family: str,
     axs[4].set_xlabel("time step")
     axs[3].axhline(75.0, ls="--", color="black", lw=1.2, label="safety threshold")
     axs[0].legend(ncol=3, loc="upper right")
-    fig.suptitle(f"Controller comparison ({scenario_family}, {split})")
+    fig.suptitle(f"Controller comparison ({scenario_family}, {split}, ep={ep0})")
     _save(fig, out_path)
 
 
@@ -88,27 +107,54 @@ def _chip_from_row(row: pd.Series, nx: int, ny: int) -> np.ndarray:
 
 
 def plot_chip_snapshots(df: pd.DataFrame, out_path: str, methods: list[str], nx=8, ny=8):
-    ref = df[(df["controller"] == methods[0]) & (df["episode"] == 0)]
+    if df.empty:
+        return
+    available_methods = [m for m in methods if (df["controller"] == m).any()]
+    if not available_methods:
+        return
+
+    ref = df[(df["controller"] == available_methods[0])]
+    ep0 = int(ref["episode"].min())
+    ref = ref[ref["episode"] == ep0]
     times = [int(ref["t"].quantile(q)) for q in [0.2, 0.45, 0.6, 0.85]]
-    fig, axs = plt.subplots(len(methods), len(times), figsize=(14, 10))
+
+    fig, axs = plt.subplots(len(available_methods), len(times), figsize=(14, max(3, 2 * len(available_methods))))
+    axs = np.atleast_2d(axs)
     vmin, vmax = df["chip_avg"].min(), df["hotspot"].max()
-    for i, m in enumerate(methods):
-        d = df[(df["controller"] == m) & (df["episode"] == 0)]
+    im = None
+    for i, m in enumerate(available_methods):
+        d = df[(df["controller"] == m) & (df["episode"] == ep0)].sort_values("t")
         for j, t in enumerate(times):
-            row = d[d["t"] == t].iloc[0]
-            im = axs[i, j].imshow(_chip_from_row(row, nx, ny), cmap="inferno", vmin=vmin, vmax=vmax)
-            axs[i, j].set_xticks([]); axs[i, j].set_yticks([])
+            row = _pick_row_at_or_before(d, t)
+            ax = axs[i, j]
+            if row is None:
+                ax.text(0.5, 0.5, "N/A", ha="center", va="center")
+                ax.set_axis_off()
+                continue
+            im = ax.imshow(_chip_from_row(row, nx, ny), cmap="inferno", vmin=vmin, vmax=vmax)
+            ax.set_xticks([])
+            ax.set_yticks([])
             if i == 0:
-                axs[i, j].set_title(f"t={t}")
+                ax.set_title(f"t~{t}")
             if j == 0:
-                axs[i, j].set_ylabel(m)
-    fig.colorbar(im, ax=axs.ravel().tolist(), shrink=0.6, label="Temperature (°C)")
+                ax.set_ylabel(m)
+    if im is not None:
+        fig.colorbar(im, ax=axs.ravel().tolist(), shrink=0.6, label="Temperature (°C)")
     _save(fig, out_path)
 
 
 def plot_spacetime(df: pd.DataFrame, out_path: str, method="contextual_dro"):
-    d = df[(df["controller"] == method) & (df["episode"] == 0)]
-    n_tiles = len(json.loads(d.iloc[0]["chip_flat"]))
+    d = df[(df["controller"] == method)]
+    if d.empty:
+        any_methods = list(df["controller"].unique()) if not df.empty else []
+        if not any_methods:
+            return
+        method = any_methods[0]
+        d = df[df["controller"] == method]
+    ep0 = int(d["episode"].min())
+    d = d[d["episode"] == ep0]
+    if d.empty:
+        return
     mat = np.stack([np.array(json.loads(v)) for v in d["chip_flat"]], axis=0)
     fig, ax = plt.subplots(figsize=(12, 4))
     im = ax.imshow(mat.T, aspect="auto", cmap="inferno", origin="lower")
@@ -120,7 +166,17 @@ def plot_spacetime(df: pd.DataFrame, out_path: str, method="contextual_dro"):
 
 
 def plot_coolant_flow(df: pd.DataFrame, out_path: str, method="contextual_dro"):
-    d = df[(df["controller"] == method) & (df["episode"] == 0)]
+    d = df[(df["controller"] == method)]
+    if d.empty:
+        any_methods = list(df["controller"].unique()) if not df.empty else []
+        if not any_methods:
+            return
+        method = any_methods[0]
+        d = df[df["controller"] == method]
+    ep0 = int(d["episode"].min())
+    d = d[d["episode"] == ep0]
+    if d.empty:
+        return
     fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
     axs[0].plot(d["t"], d["t_plate"], label="cold-plate", color="#1f77b4", lw=2)
     axs[0].plot(d["t"], d["t_coolant"], label="coolant", color="#17becf", lw=2)
@@ -135,13 +191,18 @@ def plot_coolant_flow(df: pd.DataFrame, out_path: str, method="contextual_dro"):
 
 
 def plot_summary(summary_df: pd.DataFrame, out_path: str):
+    if summary_df.empty:
+        return
     metrics = ["violation_rate_mean", "peak_hotspot_temperature_mean", "energy_usage_mean", "control_smoothness_mean"]
     id_df = summary_df[summary_df["split"] == "id"]
+    if id_df.empty:
+        id_df = summary_df
     fig, axs = plt.subplots(2, 2, figsize=(12, 8))
     axs = axs.ravel()
     for i, met in enumerate(metrics):
         ax = axs[i]
-        ax.bar(id_df["controller"], id_df[met], color=[PALETTE.get(c, "gray") for c in id_df["controller"]])
+        if met in id_df.columns:
+            ax.bar(id_df["controller"], id_df[met], color=[PALETTE.get(c, "gray") for c in id_df["controller"]])
         ax.set_title(met.replace("_mean", ""))
         ax.tick_params(axis="x", rotation=25)
     _save(fig, out_path)
