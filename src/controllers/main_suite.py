@@ -75,8 +75,7 @@ class PredictiveController(BaseMainController):
     def rho(self, context: float) -> float:
         return self.rho_fixed
 
-    def _solve(self, h0: float, c0: float, p_fc: np.ndarray, tin_fc: np.ndarray, rho: float):
-        H = min(self.h, len(p_fc))
+    def _build_problem(self, H: int, h0: float, c0: float, p_fc: np.ndarray, tin_fc: np.ndarray, rho: float):
         u = cp.Variable(H)
         h = cp.Variable(H + 1)
         c = cp.Variable(H + 1)
@@ -95,12 +94,34 @@ class PredictiveController(BaseMainController):
             ]
             obj += self.w_u * cp.square(u[k]) + self.w_du * cp.square(u[k] - up) + self.w_slack * cp.square(s[k])
             up = u[k]
-        prob = cp.Problem(cp.Minimize(obj), constr)
-        prob.solve(solver=cp.OSQP, warm_start=True, verbose=False, max_iter=2000)
-        if u.value is None:
-            return float(np.clip(self.u_prev, self.u_min, self.u_max)), None
-        u0 = float(np.clip(u.value[0], self.u_min, self.u_max))
-        return u0, {"status": prob.status, "solve_time": float(prob.solver_stats.solve_time or 0.0)}
+        return cp.Problem(cp.Minimize(obj), constr), u
+
+    def _solve(self, h0: float, c0: float, p_fc: np.ndarray, tin_fc: np.ndarray, rho: float):
+        H = min(self.h, len(p_fc))
+        if H <= 0:
+            return float(np.clip(self.u_prev, self.u_min, self.u_max)), {"status": "empty_horizon", "solve_time": 0.0}
+
+        solver_attempts = [
+            (cp.OSQP, {"warm_start": True, "verbose": False, "max_iter": 4000}),
+            (cp.SCS, {"verbose": False, "max_iters": 3000, "eps": 1e-4}),
+        ]
+
+        last_status = "failed"
+        total_solve_time = 0.0
+        for solver, opts in solver_attempts:
+            try:
+                prob, u_var = self._build_problem(H, h0, c0, p_fc, tin_fc, rho)
+                prob.solve(solver=solver, **opts)
+                status = prob.status or "unknown"
+                total_solve_time += float(prob.solver_stats.solve_time or 0.0)
+                last_status = status
+                if status in ["optimal", "optimal_inaccurate"] and u_var.value is not None:
+                    u0 = float(np.clip(u_var.value[0], self.u_min, self.u_max))
+                    return u0, {"status": status, "solve_time": total_solve_time, "solver": str(solver)}
+            except Exception:
+                continue
+
+        return float(np.clip(self.u_prev, self.u_min, self.u_max)), {"status": f"fallback_prev_u:{last_status}", "solve_time": total_solve_time, "solver": "none"}
 
     def act(self, state: dict, context: float, forecast_power: np.ndarray, Tamb_fc: np.ndarray, Tin_fc: np.ndarray):
         rho = self.rho(context)
