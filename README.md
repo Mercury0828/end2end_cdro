@@ -1,30 +1,32 @@
-# E2E-CDRO Demo (Modelica -> FMU -> FMPy -> Python orchestration)
+# E2E-CDRO Thermal Control Demo (Research-Grade Upgrade)
 
-This repository provides a runnable end-to-end demo for the synthetic mechanism verification stage:
+This repository now uses a **liquid-cooling-oriented thermal benchmark** as the main showcase:
 
-- Plant: first-order single-zone thermal model
-- Toolchain: Modelica/OpenModelica FMU export + FMPy runtime + Python fallback
-- Controllers: MPC, Static-CDRO, D-DRO, E2E-CDRO, PPO hook
-- Outputs: metrics tables + presentation-ready plots + MLflow logs
+- 2D chip thermal grid (default 8x8)
+- cold-plate lumped temperature
+- coolant lumped temperature
+- pump-speed control with saturation + slew constraints
+- spatial workload maps with burst, drift, plateau, and combined stress regimes
 
-## Adopted assumptions and explicit approximations
+## Main comparison set (non-negotiable)
 
-Because the environment may not always have PDF parsing tools and FMU toolchains installed, this implementation follows the synthetic setup specified in your request and keeps every approximation explicit:
+The primary experiment suite reports **exactly**:
+1. PID
+2. Deterministic MPC
+3. Robust MPC
+4. Non-contextual DRO
+5. Contextual DRO / E2E-CDRO
 
-1. Dynamics implemented as requested:
-   \(x_{t+1}=x_t+\alpha(Tamb_t-x_t)-\beta u_t+\gamma \xi_t+\epsilon_t\).
-2. Robust lower layer approximation:
-   - Convex single-step surrogate with worst-case disturbance `xi_nominal + rho`.
-   - Slack `s >= x_next` used for `max(0, x_next)` safety penalty.
-3. E2E training approximation:
-   - First working path uses a lightweight supervised/proxy target for proactive `rho(z)` behavior.
-   - Code is modular so implicit-KKT/SOCP can be swapped in later under `src/optimization` and `src/learning`.
-4. FMU fallback:
-   - If FMU or FMPy is unavailable, the same interface uses the pure-Python plant.
+Legacy controllers remain in source for backward compatibility but are excluded from the main evaluation and plots.
 
-## Project layout
+## Project structure
 
-See `configs/`, `modelica/`, `src/`, `scripts/`, and `tests/` for the full modular pipeline.
+- `src/plant/grid_cooling_env.py`: main plant (chip + cold plate + coolant)
+- `src/scenario/thermal_workload.py`: richer ID/OOD workload and context generation
+- `src/controllers/main_suite.py`: required controller suite + PID tuning logic
+- `scripts/eval_all.py`: multi-seed evaluation, train/val/test-style splits, aggregate metrics
+- `scripts/make_plots.py`: presentation-grade figure generation
+- `AUDIT_AND_UPGRADE_PLAN.md`: audit findings and redesign notes
 
 ## Install
 
@@ -34,52 +36,39 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Workflow commands
-
-### 1) Export FMU (OpenModelica)
+## Run main experiment
 
 ```bash
-python scripts/export_fmu.py
-# or
-cd modelica && omc export_fmu.mos
+python scripts/eval_all.py --base configs/base.yaml --out outputs/main_run
+python scripts/make_plots.py --results outputs/main_run/results_per_step.csv --summary outputs/main_run/summary.csv --outdir outputs/main_run/figures
 ```
 
-### 2) Run one trajectory demo
+## Run one method demo
 
 ```bash
-python scripts/run_single_demo.py --controller mpc
-python scripts/run_single_demo.py --controller static_cdro
-python scripts/run_single_demo.py --controller ddro
-python scripts/run_single_demo.py --controller e2e_cdro
+python scripts/run_single_demo.py --controller contextual_dro
 ```
 
-### 3) Train E2E-CDRO
+## FMU backend support
 
-```bash
-python scripts/train_e2e.py
-```
-
-### 4) Evaluate all controllers on held-out trajectories
-
-```bash
-python scripts/eval_all.py --out outputs/default_run
-```
-
-### 5) Generate scenario/mechanism/outcome plots
-
-```bash
-python scripts/make_plots.py --results outputs/default_run/results_per_step.csv --outdir outputs/default_run
-```
-
-## FMU vs Python mode
-
-Switch `configs/base.yaml`:
+FMU support remains available via config switch:
 
 ```yaml
 plant:
-  mode: python  # set to fmu to prefer FMU runtime
+  mode: fmu
   fmu_path: artifacts/SingleZoneThermal.fmu
 ```
+
+If FMU export/runtime is unavailable, the main suite remains runnable in Python mode.
+
+## Debug scalar mode (for tests/sanity only)
+
+```yaml
+plant:
+  plant_kind: scalar
+```
+
+This is intentionally demoted and not used for the main reported results.
 
 ## Testing
 

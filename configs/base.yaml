@@ -1,19 +1,72 @@
 seed: 42
-horizon: 100
-safety_threshold: 0.0
-lambda_penalty: 100.0
+
 plant:
-  mode: python   # python|fmu
+  mode: python          # python|fmu
+  plant_kind: grid      # grid (main) | scalar (debug)
   dt: 1.0
-  alpha: 0.08
-  beta: 0.35
-  gamma: 0.6
-  x0: -1.5
+  nx: 8
+  ny: 8
+  c_chip: 8.0
+  c_plate: 18.0
+  c_coolant: 30.0
+  k_diff: 0.18
+  k_chip_plate: 0.2
+  k_plate_coolant: 0.32
+  k_ambient: 0.02
+  pump_gain: 0.55
+  pump_bias: 0.25
+  pump_min: 0.0
+  pump_max: 1.0
+  pump_slew: 0.04
+  init_chip_temp: 34.0
+  init_plate_temp: 30.0
+  init_coolant_temp: 24.0
   fmu_path: artifacts/SingleZoneThermal.fmu
+
+scenario:
+  T: 360
+  grid_nx: 8
+  grid_ny: 8
+  base_power: 1.2
+  burst_power: 5.2
+  noise_std: 0.12
+  ambient_base: 24.0
+  ambient_amp: 2.0
+  coolant_base: 20.0
+  coolant_amp: 1.5
+
+surrogate:
+  a_h: 0.93
+  b_h: 2.7
+  c_h: 0.2
+  d_h: 0.1
+  a_c: 0.94
+  b_c: 0.55
+  d_c: 0.18
+
+controller:
+  horizon: 18
+  w_slack: 320.0
+  robust_rho: 1.5
+  dro_rho: 1.0
+  ctx_rho_min: 0.3
+  ctx_rho_max: 2.2
+  ctx_rho_gain: 1.1
+
+safety:
+  hotspot_threshold: 75.0
+  energy_weight: 2.0
+  violation_weight: 120.0
+
 evaluation:
-  n_train: 64
-  n_val: 16
-  n_test: 32
-  output_dir: outputs/default_run
-  results_csv: results_per_step.csv
-  summary_csv: summary.csv
+  output_dir: outputs/main_run
+  seeds: [21, 42, 84]
+  id_families: [calm_burst_recovery, burst_train, broad_plateau]
+  ood_families: [drifting_hotspot, combined_stress]
+  n_train_per_family: 6
+  n_val_per_family: 4
+  n_test_per_family: 4
+
+legacy:
+  main_comparison_baselines: [pid, deterministic_mpc, robust_mpc, non_contextual_dro, contextual_dro]
+  disabled_in_main: [ppo, static_cdro, ddro]
