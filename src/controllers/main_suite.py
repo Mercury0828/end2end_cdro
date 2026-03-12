@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 import cvxpy as cp
+import warnings
 
 
 @dataclass
@@ -111,7 +112,13 @@ class PredictiveController(BaseMainController):
         for solver, opts in solver_attempts:
             try:
                 prob, u_var = self._build_problem(H, h0, c0, p_fc, tin_fc, rho)
-                prob.solve(solver=solver, **opts)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="Solution may be inaccurate.*",
+                        category=UserWarning,
+                    )
+                    prob.solve(solver=solver, **opts)
                 status = prob.status or "unknown"
                 total_solve_time += float(prob.solver_stats.solve_time or 0.0)
                 last_status = status

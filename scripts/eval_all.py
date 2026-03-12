@@ -10,8 +10,9 @@ if str(ROOT) not in sys.path:
 
 import argparse
 import json
-import numpy as np
+import time
 import pandas as pd
+import numpy as np
 
 from src.utils.config import load_yaml
 from src.utils.io import ensure_dir
@@ -63,9 +64,9 @@ def run_episode(controller, scenario, env, cfg):
     rows = []
     solve_times = []
 
+    power_total = scenario["q_map"].sum(axis=(1, 2))
     for t in scenario["t"]:
         st = env.get_state()
-        power_total = scenario["q_map"].sum(axis=(1, 2))
         p_fc = rolling_forecast(power_total, t, H)
         tin_fc = rolling_forecast(scenario["Tin"], t, H)
         tamb_fc = rolling_forecast(scenario["Tamb"], t, H)
@@ -91,18 +92,35 @@ def run_episode(controller, scenario, env, cfg):
     return ep_df, metrics
 
 
+def _flush_results(step_rows: list[pd.DataFrame], ep_rows: list[dict], out_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if not step_rows or not ep_rows:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    step_df = pd.concat(step_rows, ignore_index=True)
+    ep_df = pd.DataFrame(ep_rows)
+    summary = ep_df.groupby(["controller", "split"]).agg(["mean", "std"])
+    summary.columns = [f"{a}_{b}" for a, b in summary.columns]
+    summary = summary.reset_index()
+
+    step_df.to_csv(out_dir / "results_per_step.csv", index=False)
+    ep_df.to_csv(out_dir / "episode_metrics.csv", index=False)
+    summary.to_csv(out_dir / "summary.csv", index=False)
+    return step_df, ep_df, summary
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="configs/base.yaml")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--checkpoint_every", type=int, default=10, help="flush CSVs every N episodes")
     args = ap.parse_args()
 
     cfg = load_yaml(args.base)
     set_seed(cfg["seed"])
     out_dir = Path(args.out or cfg["evaluation"]["output_dir"])
     ensure_dir(out_dir)
+    print(f"[eval_all] writing outputs to: {out_dir.resolve()}")
 
-    scfg = ThermalScenarioConfig(**cfg["scenario"]) 
+    scfg = ThermalScenarioConfig(**cfg["scenario"])
     val = build_dataset(scfg, cfg["evaluation"]["id_families"], cfg["evaluation"]["n_val_per_family"], seed=cfg["seed"] + 1)
     test_id = build_dataset(scfg, cfg["evaluation"]["id_families"], cfg["evaluation"]["n_test_per_family"], seed=cfg["seed"] + 2)
     test_ood = build_dataset(scfg, cfg["evaluation"]["ood_families"], cfg["evaluation"]["n_test_per_family"], seed=cfg["seed"] + 3)
@@ -121,7 +139,14 @@ if __name__ == "__main__":
         "contextual_dro": ContextualDROController(m, horizon=cfg["controller"]["horizon"], target_hotspot=cfg["safety"]["hotspot_threshold"], rho_min=cfg["controller"]["ctx_rho_min"], rho_max=cfg["controller"]["ctx_rho_max"], rho_gain=cfg["controller"]["ctx_rho_gain"], w_slack=cfg["controller"]["w_slack"]),
     }
 
-    all_step, all_ep = [], []
+    all_step: list[pd.DataFrame] = []
+    all_ep: list[dict] = []
+    episodes_done = 0
+    start = time.time()
+
+    total_episodes = len(cfg["evaluation"]["seeds"]) * (len(test_id) + len(test_ood)) * len(controllers)
+    print(f"[eval_all] total episodes to run: {total_episodes}")
+
     for seed in cfg["evaluation"]["seeds"]:
         set_seed(seed)
         for split, dataset in [("id", test_id), ("ood", test_ood)]:
@@ -136,14 +161,18 @@ if __name__ == "__main__":
                     all_step.append(step_df)
                     all_ep.append({"controller": c_name, "split": split, "seed": seed, "episode": ep, **met})
 
-    step_df = pd.concat(all_step, ignore_index=True)
-    ep_df = pd.DataFrame(all_ep)
-    summary = ep_df.groupby(["controller", "split"]).agg(["mean", "std"])
-    summary.columns = [f"{a}_{b}" for a, b in summary.columns]
-    summary = summary.reset_index()
+                    episodes_done += 1
+                    if episodes_done % args.checkpoint_every == 0:
+                        _flush_results(all_step, all_ep, out_dir)
+                        elapsed = time.time() - start
+                        print(f"[eval_all] checkpoint {episodes_done}/{total_episodes} episodes, elapsed {elapsed:.1f}s")
 
-    step_df.to_csv(out_dir / "results_per_step.csv", index=False)
-    ep_df.to_csv(out_dir / "episode_metrics.csv", index=False)
-    summary.to_csv(out_dir / "summary.csv", index=False)
+    step_df, ep_df, summary = _flush_results(all_step, all_ep, out_dir)
     (out_dir / "pid_tuning.json").write_text(json.dumps(tune, indent=2))
+
+    elapsed = time.time() - start
+    print(f"[eval_all] completed in {elapsed:.1f}s")
+    print(f"[eval_all] wrote: {out_dir / 'results_per_step.csv'} ({len(step_df)} rows)")
+    print(f"[eval_all] wrote: {out_dir / 'episode_metrics.csv'} ({len(ep_df)} rows)")
+    print(f"[eval_all] wrote: {out_dir / 'summary.csv'} ({len(summary)} rows)")
     print(summary[["controller", "split", "total_cost_mean", "violation_rate_mean", "peak_hotspot_temperature_mean"]])
